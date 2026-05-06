@@ -44,12 +44,12 @@ func pushToLoki(lokiURL, eventType string, payload json.RawMessage) error {
 	}
 	return nil
 }
-
 func main() {
 	amqpURL := os.Getenv("AMQP_URL")
 	if amqpURL == "" {
 		amqpURL = "amqp://guest:guest@localhost:5672/"
 	}
+
 	lokiURL := os.Getenv("LOKI_URL")
 	if lokiURL == "" {
 		lokiURL = "http://localhost:3100"
@@ -61,18 +61,42 @@ func main() {
 	}
 	defer conn.Close()
 
-	if err := messaging.Subscribe(ch, messaging.TaskExchange, messaging.QueueAuditTaskEvents, func(msg messaging.Message) {
-		slog.Info("audit: received event", "type", msg.Type)
-		if err := pushToLoki(lokiURL, msg.Type, msg.Payload); err != nil {
-			slog.Error("audit: loki push", "err", err)
-		}
+	if err := messaging.DeclareTopology(ch, []messaging.Binding{
+		{Exchange: messaging.TaskExchange, Queue: messaging.QueueAuditTaskEvents},
+		{Exchange: messaging.CaptchaVerify, Queue: messaging.QueueAuditCaptchaEvents},
 	}); err != nil {
-		log.Fatal("rabbit subscribe:", err)
+		log.Fatal("rabbit topology:", err)
 	}
 
-	slog.Info("audit service listening", "exchange", messaging.TaskExchange)
+	if err := messaging.Subscribe(ch, messaging.TaskExchange, messaging.QueueAuditTaskEvents, func(msg messaging.Message) {
+		slog.Info("audit: received task event", "type", msg.Type)
+
+		if err := pushToLoki(lokiURL, msg.Type, msg.Payload); err != nil {
+			slog.Error("audit: loki push task", "err", err)
+		}
+	}); err != nil {
+		log.Fatal("rabbit subscribe task:", err)
+	}
+
+	if err := messaging.Subscribe(ch, messaging.CaptchaVerify, messaging.QueueAuditCaptchaEvents, func(msg messaging.Message) {
+		slog.Info("audit: received captcha event", "type", msg.Type)
+
+		if err := pushToLoki(lokiURL, msg.Type, msg.Payload); err != nil {
+			slog.Error("audit: loki push captcha", "err", err)
+		}
+	}); err != nil {
+		log.Fatal("rabbit subscribe captcha:", err)
+	}
+
+	slog.Info(
+		"audit service listening",
+		"task_exchange", messaging.TaskExchange,
+		"captcha_exchange", messaging.CaptchaVerify,
+	)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+
 	slog.Info("audit service stopping")
 }
