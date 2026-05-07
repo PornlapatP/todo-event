@@ -35,7 +35,7 @@ func (r *MongoRepository) collection() (*mongo.Collection, error) {
 	if either.IsLeft() {
 		return nil, either.MustLeft()
 	}
-	return either.MustRight().Database("todoe").Collection("audit_log"), nil
+	return either.MustRight().Database("todoe").Collection("sla_log"), nil
 }
 
 func (r *MongoRepository) Save(ctx context.Context, entry domain.AuditEntry) mo.Result[struct{}] {

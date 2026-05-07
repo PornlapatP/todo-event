@@ -17,6 +17,10 @@ import (
 	taskadapter "todoe/domain/task/adapter"
 	taskhttp "todoe/domain/task/adapter/http"
 	taskapplication "todoe/domain/task/application"
+	taskdomain "todoe/domain/task/domain"
+	auditadapter "todoe/internal/audit/adapter"
+	"todoe/internal/event"
+	csvadapter "todoe/internal/sla/adapter"
 )
 
 func main() {
@@ -35,9 +39,23 @@ func main() {
 	healthService := healthapp.NewService(healthRepo)
 	healthHandler := healthhttp.NewHandler(healthService)
 
+	bus := event.NewEventBus()
+	auditRepo := auditadapter.NewMongoRepository(clientIO)
+	auditHandler := auditadapter.NewAuditHandler(auditRepo)
+
 	taskRepo := taskadapter.NewMongoRepository(clientIO)
-	taskService := taskapplication.NewService(taskRepo)
+	taskService := taskapplication.NewService(taskRepo, bus)
 	taskHandler := taskhttp.NewHandler(taskService)
+
+	csvRepo := csvadapter.NewCSVRepository("tasks_audit.csv")
+	csvHandler := csvadapter.NewCSVHandler(csvRepo)
+
+	bus.Subscribe(taskdomain.EventCreated, auditHandler)
+	bus.Subscribe(taskdomain.EventStatusChanged, auditHandler)
+	bus.Subscribe(taskdomain.EventStatusCompleted, auditHandler)
+
+	bus.Subscribe(taskdomain.EventStatusCompleted, csvHandler)
+	// bus.Subscribe(taskdomain.EventStatusCompleted, taskHandler)
 
 	app := fiber.New()
 	app.Get("/health", healthHandler.CheckHealth)

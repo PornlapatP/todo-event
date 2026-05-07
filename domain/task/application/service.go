@@ -3,12 +3,14 @@ package application
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/samber/mo"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"todoe/domain/task/domain"
 	"todoe/domain/task/port"
+	"todoe/internal/event"
 )
 
 var (
@@ -17,13 +19,17 @@ var (
 )
 
 type Service struct {
-	repo port.Repository
+	repo      port.Repository
+	publisher event.Publisher
 }
 
 var _ port.UseCase = (*Service)(nil)
 
-func NewService(repo port.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo port.Repository, publisher port.Publisher) *Service {
+	return &Service{
+		repo:      repo,
+		publisher: publisher,
+	}
 }
 
 func validateTitle(title string) error {
@@ -49,6 +55,12 @@ func (s *Service) CreateTask(ctx context.Context, title string) mo.Result[domain
 	if result := s.repo.Save(ctx, task); result.IsError() {
 		return mo.Err[domain.Task](result.Error())
 	}
+
+	s.publisher.Publish(ctx, event.Event{
+		Type:    domain.EventCreated,
+		Payload: task,
+	})
+
 	return mo.Ok(task)
 }
 
@@ -64,9 +76,26 @@ func (s *Service) ChangeStatus(ctx context.Context, task domain.Task, status dom
 	if err := validateStatus(status); err != nil {
 		return mo.Err[domain.Task](err)
 	}
+
 	next := task.ChangeStatus(status)
+
 	if result := s.repo.Save(ctx, next); result.IsError() {
 		return mo.Err[domain.Task](result.Error())
 	}
+
+	s.publisher.Publish(ctx, event.Event{
+		Type:    domain.EventStatusChanged,
+		Payload: next,
+	})
+
+	if next.Status == domain.StatusDone {
+		now := time.Now()
+		task.CompletedAt = &now
+		s.publisher.Publish(ctx, event.Event{
+			Type:    domain.EventStatusCompleted,
+			Payload: next,
+		})
+	}
+
 	return mo.Ok(next)
 }
