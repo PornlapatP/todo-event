@@ -20,6 +20,10 @@ import (
 	taskapplication "todoe/domain/task/application"
 	taskdomain "todoe/domain/task/domain"
 	"todoe/internal/event"
+
+	"log/slog"
+	slogloki "github.com/samber/slog-loki/v3"
+	"github.com/grafana/loki-client-go/loki"
 )
 
 func main() {
@@ -31,6 +35,16 @@ func main() {
 	clientIO := mo.NewIOEither(func() (*mongo.Client, error) {
 		return mongo.Connect(options.Client().ApplyURI(mongoURI))
 	})
+
+	// Configure Loki Logger
+	lokiConfig, _ := loki.NewDefaultConfig("http://localhost:3100/loki/api/v1/push")
+	lokiClient, _ := loki.New(lokiConfig)
+	
+	logger := slog.New(slogloki.Option{Level: slog.LevelInfo, Client: lokiClient}.NewLokiHandler()).
+		With("app", "todoe", "env", "dev")
+	slog.SetDefault(logger)
+
+	slog.Info("Starting application", "mongo_uri", mongoURI)
 
 	healthRepo := healthadapter.NewMongoRepository(clientIO)
 	defer healthRepo.Disconnect(context.Background())
@@ -46,7 +60,13 @@ func main() {
 	bus.Subscribe(taskdomain.EventStatusChanged, auditHandler)
 
 	taskRepo := taskadapter.NewMongoRepository(clientIO)
-	taskService := taskapplication.NewService(taskRepo, bus)
+	taskViewRepo := taskadapter.NewMongoViewRepository(clientIO)
+	
+	projectionHandler := taskapplication.NewProjectionHandler(taskViewRepo)
+	bus.Subscribe(taskdomain.EventCreated, projectionHandler)
+	bus.Subscribe(taskdomain.EventStatusChanged, projectionHandler)
+
+	taskService := taskapplication.NewService(taskRepo, taskViewRepo, bus)
 	taskHandler := taskhttp.NewHandler(taskService)
 	// HTTP Server
 	app := fiber.New()

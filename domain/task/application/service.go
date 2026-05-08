@@ -20,13 +20,14 @@ var (
 
 type Service struct {
 	repo      port.Repository
+	viewRepo  port.ViewRepository
 	publisher port.Publisher
 }
 
 var _ port.UseCase = (*Service)(nil)
 
-func NewService(repo port.Repository, publisher port.Publisher) *Service {
-	return &Service{repo: repo, publisher: publisher}
+func NewService(repo port.Repository, viewRepo port.ViewRepository, publisher port.Publisher) *Service {
+	return &Service{repo: repo, viewRepo: viewRepo, publisher: publisher}
 }
 
 func validateTitle(title string) error {
@@ -58,11 +59,11 @@ func (s *Service) CreateTask(ctx context.Context, title string) mo.Result[domain
 }
 
 func (s *Service) ListTasks(ctx context.Context) mo.Result[[]domain.Task] {
-	return s.repo.FindAll(ctx)
+	return s.viewRepo.FindAll(ctx)
 }
 
 func (s *Service) GetTask(ctx context.Context, id bson.ObjectID) mo.Result[domain.Task] {
-	return s.repo.FindByID(ctx, id)
+	return s.viewRepo.FindByID(ctx, id)
 }
 
 func (s *Service) ChangeStatus(ctx context.Context, id bson.ObjectID, status domain.Status) mo.Result[domain.Task] {
